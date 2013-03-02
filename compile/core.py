@@ -1,6 +1,9 @@
 from io import TextIOBase
+from collections import defaultdict
 
 from .. import parse
+
+__all__ = ['INFIX_LEFT', 'INFIX_RIGHT', 'PREIX', 'scanvars', 'compile', 'Code']
 
 
 # scanvars :: (StructMixIn, set Link) -> (set Link, set Link, set Link, set Link, set (type a, a))
@@ -12,7 +15,7 @@ from .. import parse
 #   4. free variables
 #   5. constant (type, value) pairs
 #
-def scanvars(code, cell):
+def scanvars(code, cell, rightbind=False):
 
     if isinstance(code, parse.tree.Link):
 
@@ -25,11 +28,38 @@ def scanvars(code, cell):
 
         return set(), set(), set(), set(), {(type(code.value), code.value)}
 
-    globals  = set()
-    locals   = set()
-    closures = set()
+    if isinstance(code, parse.tree.Expression):
 
-    raise NotImplementedError
+        f, *args = code
+        g =  INFIX_RIGHT[f] if f.infix and not f.closed and rightbind \
+        else INFIX_LEFT[f]  if f.infix and not f.closed and len(args) == 1 \
+        else PREFIX[f]
+
+        if hasattr(g, 'scanvars'):
+
+            return g.scanvars(code, cell)
+
+        globals = set()
+        locals  = set()
+        cell    = set()
+        free    = set()
+        consts  = set()
+
+        for item in code:
+
+            a, b, c, d, e = scanvars(item, cell)
+            globals |= a
+            globals -= b | c | d
+            locals  |= b
+            locals  -= c | d
+            cell    |= c
+            cell    -= d
+            free    |= d
+            consts  |= e
+
+        return globals, locals, cell, free, consts
+
+    raise TypeError('not an AST output structure: {!r}'.format(code))
 
 
 # compile :: (Either StructMixIn TextIOBase str, Code, Maybe str) -> Code
@@ -135,6 +165,8 @@ class Code:
     #
     def push(self, item):
 
+        oldstacksize = self.depth
+
         if isinstance(item, parse.tree.Link):
 
             self.appendcode('LOAD_FAST',  self.varnames[item]) if item in self.varnames else \
@@ -149,4 +181,67 @@ class Code:
 
         else:
 
-            raise NotImplementedError
+            self.call(*item)
+
+        assert oldstacksize + 1 == self.depth, 'stack depth calculation error'
+
+    # call :: *StructMixIn -> ()
+    #
+    # Call a (possibly built-in) function.
+    #
+    def call(self, f, *args, rightbind=False):
+
+        return self.call(*args, rightbind=True) if f.infix and f == '' \
+          else INFIX_RIGHT[f](self, f, *args) if f.infix and not f.closed and rightbind \
+          else INFIX_LEFT[f](self, f, *args)  if f.infix and not f.closed and len(args) == 1 \
+          else PREFIX[f](self, f, *args)
+
+    call.scanvars = lambda code, cell: scanvars(parse.tree.Expression(code[1:]), cell, rightbind=True)
+
+    # infixbindl :: (StructMixIn, StructMixIn) -> ()
+    #
+    # Default implementation of a left infix bind.
+    #
+    def infixbindl(self, op, arg):
+
+        raise NotImplementedError
+
+    # infixbindr :: (StructMixIn, StructMixIn+) -> ()
+    #
+    # Default implementation of right infix bind.
+    #
+    def infixbindr(self, op, *args):
+
+        raise NotImplementedError
+
+    # nativecall :: (StructMixIn, *StructMixIn) -> ()
+    #
+    # Call a non-builtin (i.e. defined in runtime) function.
+    #
+    def nativecall(self, f, *args):
+
+        raise NotImplementedError
+
+
+# _ :: dict StructMixIn ((Code, *StructMixIn) -> ())
+#
+# Map macro name to its implementation.
+#
+# INFIX_LEFT[R]  : `arg R`     where `R` is infix
+# INFIX_RIGHT[R] : `R arg ...` where `R` is infix
+# PREFIX[R]      : `R arg ...`
+#
+# ---
+#
+# Each macro implementation may reimplement the variable scanning algorithm
+# by supplying a `scanvars`-like function as its `scanvars` attribute.
+#
+# For example, `switch (a = b) (c = d)` may want to return joined results of
+# `scanvars(a)`, `scanvars(b)`, `scanvars(c)`, and `scanvars(d)`, while the
+# default behavior would be to do `scanvars(a = b)` and `scanvars(c = d)`.
+#
+INFIX_LEFT  = defaultdict(lambda: Code.infixbindl)
+INFIX_RIGHT = defaultdict(lambda: Code.infixbindr)
+PREFIX      = defaultdict(lambda: Code.nativecall)
+
+PREFIX[''] = Code.call
