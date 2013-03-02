@@ -8,6 +8,12 @@ from .. import parse
 __all__ = ['INFIX_LEFT', 'INFIX_RIGHT', 'PREFIX', 'scanvars', 'compile', 'Code']
 
 
+### VARIABLE SCANNER
+#
+# Instead of actually compiling code, this part looks for whatever variables
+# it references.
+#
+
 # scanvars :: (StructMixIn, set Link) -> (set Link, set Link, set Link, set Link)
 #
 # Scan an AST for variable names. The returned sets contain:
@@ -35,30 +41,60 @@ def scanvars(code, cell, rightbind=False):
         g =  INFIX_RIGHT[f] if f.infix and not f.closed and rightbind \
         else INFIX_LEFT[f]  if f.infix and not f.closed and len(args) == 1 \
         else PREFIX[f]
-
-        if hasattr(g, 'scanvars'):
-
-            return g.scanvars(code, cell)
-
-        globals = set()
-        locals  = set()
-        ncell   = set()
-        free    = set()
-
-        for item in code:
-
-            a, b, c, d = scanvars(item, cell)
-            globals |= a
-            globals -= b | c | d
-            locals  |= b
-            locals  -= c | d
-            ncell   |= c
-            ncell   -= d
-            free    |= d
-
-        return globals, locals, ncell, free
+        return getattr(g, 'scanvars', joinvars)(code, cell)
 
     raise TypeError('not an AST output structure: {!r}'.format(code))
+
+
+# joinvars :: ([StructMixIn], set Link) -> (set Link, set Link, set Link, set Link)
+#
+# Like `scanvars`, but for multiple items in the same expression.
+#
+def joinvars(code, cell):
+
+    globals = set()
+    locals  = set()
+    ncell   = set()
+    free    = set()
+
+    for item in code:
+
+        a, b, c, d = scanvars(item, cell)
+        globals |= a
+        globals -= b | c | d
+        locals  |= b
+        locals  -= c | d
+        ncell   |= c
+        ncell   -= d
+        free    |= d
+
+    return globals, locals, ncell, free
+
+
+# joinvars1 :: ([StructMixIn], set Link) -> (set Link, set Link, set Link, set Link)
+#
+# Like `joinvars`, but ignores the first item, which is generally the function name.
+# Useful for compile-time functions::
+#
+#     (PREFIX !! '+') = bind binary_op 'BINARY_ADD' 'INPLACE_ADD'
+#     (PREFIX !! '+').scanvars = compile.joinvars1
+#
+def joinvars1(code, cell):
+
+    return joinvars(code[1:], cell)
+
+
+# joinvarsX :: (*StructMixIn, Maybe bool) -> typeof joinvars
+#
+# A wrapper for `joinvars` and `joinvars1` that adds a few more items.
+# Useful when a compile-time function uses variables.
+#
+def joinvarsX(*add, skip_first=False):
+
+    add = list(add)
+    return lambda code, cell: (joinvars1 if skip_first else joinvars)(add + list(code), cell)
+
+### VARIABLE SCANNER--
 
 
 # compile :: (Either StructMixIn TextIOBase str, Code, Maybe str) -> Code
@@ -356,7 +392,12 @@ class Code:
     #
     def infixbindl(self, op, arg):
 
-        raise NotImplementedError
+        self.push(parse.tree.Link('bind'))
+        self.push(op)
+        self.push(arg)
+        self.CALL_FUNCTION(2, -2)
+
+    infixbindl.scanvars = joinvarsX(parse.tree.Link('bind'))
 
     # infixbindr :: (StructMixIn, StructMixIn+) -> ()
     #
@@ -364,7 +405,14 @@ class Code:
     #
     def infixbindr(self, op, *args):
 
-        raise NotImplementedError
+        self.push(parse.tree.Link('bind'))
+        self.push(parse.tree.Link('flip'))
+        self.push(op)
+        self.CALL_FUNCTION(1, -1)
+        self.push(*args) if len(args) == 1 else self.call(*args)
+        self.CALL_FUNCTION(2, -2)
+
+    infixbindr.scanvars = joinvarsX(parse.tree.Link('bind'), parse.tree.Link('flip'))
 
     # nativecall :: (StructMixIn, *StructMixIn) -> ()
     #
