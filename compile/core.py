@@ -8,27 +8,26 @@ from .. import parse
 __all__ = ['INFIX_LEFT', 'INFIX_RIGHT', 'PREFIX', 'scanvars', 'compile', 'Code']
 
 
-# scanvars :: (StructMixIn, set Link) -> (set Link, set Link, set Link, set Link, set (type a, a))
+# scanvars :: (StructMixIn, set Link) -> (set Link, set Link, set Link, set Link)
 #
 # Scan an AST for variable names. The returned sets contain:
 #   1. global variables
 #   2. local variables
 #   3. cell variables
 #   4. free variables
-#   5. constant (type, value) pairs
 #
 def scanvars(code, cell, rightbind=False):
 
     if isinstance(code, parse.tree.Link):
 
         return (
-          (set(), set(), set(), {code}, set()) if code in cell else
-          ({code}, set(), set(), set(), set())
+          (set(), set(), set(), {code}) if code in cell else
+          ({code}, set(), set(), set())
         )
 
     if isinstance(code, parse.tree.Constant):
 
-        return set(), set(), set(), set(), {(type(code.value), code.value)}
+        return set(), set(), set(), set()
 
     if isinstance(code, parse.tree.Expression):
 
@@ -45,11 +44,10 @@ def scanvars(code, cell, rightbind=False):
         locals  = set()
         ncell   = set()
         free    = set()
-        consts  = set()
 
         for item in code:
 
-            a, b, c, d, e = scanvars(item, cell)
+            a, b, c, d = scanvars(item, cell)
             globals |= a
             globals -= b | c | d
             locals  |= b
@@ -57,9 +55,8 @@ def scanvars(code, cell, rightbind=False):
             ncell   |= c
             ncell   -= d
             free    |= d
-            consts  |= e
 
-        return globals, locals, ncell, free, consts
+        return globals, locals, ncell, free
 
     raise TypeError('not an AST output structure: {!r}'.format(code))
 
@@ -89,7 +86,7 @@ def compile(code, target, name='<unknown>'):
         raise TypeError('not compilable: {!r}'.format(code))
 
 
-# data Code = Code (str, int, int, int, set Link, set Link, set Link, set Link, set (type a, a))
+# data Code = Code (str, int, int, int, set Link, set Link, set Link, set Link)
 #           where bytecode :: [(int, int)]
 #                 lineno   :: int
 #                 depth    :: int
@@ -108,7 +105,7 @@ class Code:
     GENERATOR = 32
     NOFREE    = 64
 
-    def __init__(self, name, argc, kwargc, flags, globals, locals, cell, free, consts):
+    def __init__(self, name, argc, kwargc, flags, globals, locals, cell, free):
 
         super().__init__()
         self.name  = name
@@ -137,7 +134,7 @@ class Code:
         assert not (cell & globals)
         assert not (locals & globals)
 
-        self.consts   = dict(zip(consts,  range(len(consts))))
+        self.consts   = {}
         self.names    = dict(zip(globals, range(len(globals))))
         self.varnames = dict(zip(locals,  range(len(locals))))
         self.cellvars = dict(zip(cell,    range(len(cell))))
@@ -220,7 +217,9 @@ class Code:
 
         elif isinstance(item, parse.tree.Constant):
 
-            self.appendcode('LOAD_CONST', self.consts[type(item.value), item.value])
+            val = item.value
+            self.consts[type(val), val] = a = self.consts.get((type(val), val), len(self.consts))
+            self.appendcode('LOAD_CONST', a)
 
         else:
 
@@ -281,7 +280,6 @@ class Code:
 
         for kw, value in kwargs.items():
 
-            self.consts[str, str(kw)] = self.consts.get((str, str(kw)), len(self.consts))
             self.push(parse.tree.Constant(str(kw)))
             self.push(value)
 
