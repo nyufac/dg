@@ -281,6 +281,7 @@ class Code:
 
         for kw, value in kwargs.items():
 
+            self.consts[str, str(kw)] = self.consts.get((str, str(kw)), len(self.consts))
             self.push(parse.tree.Constant(str(kw)))
             self.push(value)
 
