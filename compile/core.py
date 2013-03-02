@@ -466,7 +466,7 @@ class Code:
 #
 # INFIX_LEFT[R]  : `arg R`     where `R` is infix
 # INFIX_RIGHT[R] : `R arg ...` where `R` is infix
-# PREFIX[R]      : `R arg ...`
+# PREFIX[R]      : `R arg ...` or `arg1 R arg2`
 #
 # ---
 #
