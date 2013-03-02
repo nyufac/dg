@@ -3,7 +3,7 @@ from collections import defaultdict
 
 from .. import parse
 
-__all__ = ['INFIX_LEFT', 'INFIX_RIGHT', 'PREIX', 'scanvars', 'compile', 'Code']
+__all__ = ['INFIX_LEFT', 'INFIX_RIGHT', 'PREFIX', 'scanvars', 'compile', 'Code']
 
 
 # scanvars :: (StructMixIn, set Link) -> (set Link, set Link, set Link, set Link, set (type a, a))
