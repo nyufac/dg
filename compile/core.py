@@ -41,7 +41,7 @@ def scanvars(code, cell, rightbind=False):
 
         globals = set()
         locals  = set()
-        cell    = set()
+        ncell   = set()
         free    = set()
         consts  = set()
 
@@ -52,12 +52,12 @@ def scanvars(code, cell, rightbind=False):
             globals -= b | c | d
             locals  |= b
             locals  -= c | d
-            cell    |= c
-            cell    -= d
+            ncell   |= c
+            ncell   -= d
             free    |= d
             consts  |= e
 
-        return globals, locals, cell, free, consts
+        return globals, locals, ncell, free, consts
 
     raise TypeError('not an AST output structure: {!r}'.format(code))
 
