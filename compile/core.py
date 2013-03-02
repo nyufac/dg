@@ -40,7 +40,7 @@ def scanvars(code, cell, rightbind=False):
         f, *args = code
         g =  INFIX_RIGHT[f] if f.infix and not f.closed and rightbind \
         else INFIX_LEFT[f]  if f.infix and not f.closed and len(args) == 1 \
-        else PREFIX[f]
+        else PREFIX[f] if isinstance(f, parse.tree.Link) else Code.nativecall
         return getattr(g, 'scanvars', joinvars)(code, cell)
 
     raise TypeError('not an AST output structure: {!r}'.format(code))
@@ -351,7 +351,7 @@ class Code:
     #
     def push(self, item):
 
-        oldstacksize = self.depth
+        mdepth = self.depth
 
         if isinstance(item, parse.tree.Link):
 
@@ -371,7 +371,7 @@ class Code:
 
             self.call(*item)
 
-        assert oldstacksize + 1 == self.depth, 'stack depth calculation error'
+        assert mdepth + 1 == self.depth, 'stack depth calculation error: {} -> {}'.format(mdepth, self.depth)
 
     # call :: *StructMixIn -> ()
     #
@@ -382,7 +382,7 @@ class Code:
         return self.call(*args, rightbind=True) if f.infix and f == '' \
           else INFIX_RIGHT[f](self, f, *args) if f.infix and not f.closed and rightbind \
           else INFIX_LEFT[f](self, f, *args)  if f.infix and not f.closed and len(args) == 1 \
-          else PREFIX[f](self, f, *args)
+          else PREFIX[f](self, f, *args) if isinstance(f, parse.tree.Link) else self.nativecall(f, *args)
 
     call.scanvars = lambda code, cell: scanvars(parse.tree.Expression(code[1:]), cell, rightbind=True)
 
