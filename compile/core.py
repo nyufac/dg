@@ -1,5 +1,7 @@
-from io import TextIOBase
-from collections import defaultdict
+import io
+import dis
+import types
+import collections
 
 from .. import parse
 
@@ -70,10 +72,11 @@ def compile(code, target, name='<unknown>'):
 
     if isinstance(code, parse.tree.StructMixIn):
 
-        target.RETURN_VALUE(code)
+        target.push(code)
+        target.RETURN_VALUE()
         return target
 
-    elif isinstance(code, TextIOBase):
+    elif isinstance(code, io.TextIOBase):
 
         return compile(parse.fd(code, name), target, name)
 
@@ -114,15 +117,16 @@ class Code:
         self.argc   = argc
         self.kwargc = kwargc
 
+        self.filename = '<generated>'
         self.lineno   = 0
-        self.depth    = 0
+        self.depth    = 10
         self.depthmax = 0
         self.bytecode = []
         self.lnomap   = {}
 
         # Just in case.
         # Run with `-O` (or was it `-OO`?) to ignore these checks.
-        assert len(locals) >= argc + kwargc + bool(flags & self.VARARGS) + bool(flags & VARKWARGS)
+        assert len(locals) >= argc + kwargc + bool(flags & self.VARARGS) + bool(flags & self.VARKWARGS)
         assert bool(flags & self.NOFREE) == (not cell)
         assert bool(flags & self.NESTED) == bool(free)
 
@@ -153,10 +157,49 @@ class Code:
     #
     def appendcode(self, name, argument=None, stackdelta=None):
 
-        raise NotImplementedError
+        #raise NotImplementedError
 
-        stackdelta = self.OPCODE_STACK_DELTA[name] if stackdelta is None else stackdelta
-        ...
+        #stackdelta = self.OPCODE_STACK_DELTA[name] if stackdelta is None else stackdelta
+        self.bytecode.append((dis.opmap[name], argument))
+
+    @property
+    # bakedcode :: iter bytes
+    #
+    # Compiled bytecode string.
+    #
+    def bakedcode(self):
+
+        for code, arg in self.bytecode:
+
+            yield code
+
+            if code >= dis.HAVE_ARGUMENT:
+
+                yield arg %  256
+                yield arg // 256
+
+    @property
+    # immutable :: code
+    #
+    # Compiled code object.
+    #
+    def immutable(self):
+
+        return types.CodeType(
+            self.argc,
+            self.kwargc,
+            len(self.varnames),
+            self.depthmax,
+            self.flags,
+            bytes(self.bakedcode),
+            tuple(x for _, x in sorted(self.consts,   key=self.consts.__getitem__)),
+            tuple(              sorted(self.names,    key=self.names.__getitem__)),
+            tuple(              sorted(self.varnames, key=self.varnames.__getitem__)),
+            self.filename, self.name,
+            self.lineno, b'',
+            tuple(              sorted(self.freevars, key=self.freevars.__getitem__)),
+            tuple(              sorted(self.cellvars, key=self.cellvars.__getitem__)),
+        )
 
     # push :: StructMixIn -> ()
     #
@@ -183,7 +226,7 @@ class Code:
 
             self.call(*item)
 
-        assert oldstacksize + 1 == self.depth, 'stack depth calculation error'
+        #assert oldstacksize + 1 == self.depth, 'stack depth calculation error'
 
     # call :: *StructMixIn -> ()
     #
@@ -220,8 +263,45 @@ class Code:
     #
     def nativecall(self, f, *args):
 
-        raise NotImplementedError
+        self.push(f)
+        self.nativecall_args(args, 0, f.infix and not f.closed)
 
+    # nativecall_args :: ([StructMixIn], int, bool) -> ()
+    #
+    # Call a non-builtin function that is already on top of the stack.
+    #
+    def nativecall_args(self, args, preloaded, infix=False):
+
+        defs  = args, None, None, {}, (), ()
+        args, _, _, kwargs, vararg, varkwarg = defs if infix else parse.syntax.argspec(args, definition=False)
+
+        for arg in args:
+
+            self.push(arg)
+
+        for kw, value in kwargs.items():
+
+            self.push(parse.tree.Constant(str(kw)))
+            self.push(value)
+
+        for item in (vararg + varkwarg):
+
+            self.push(item)
+
+        (
+          self.CALL_FUNCTION_VAR_KW if vararg and varkwarg else
+          self.CALL_FUNCTION_VAR    if vararg else
+          self.CALL_FUNCTION_KW     if varkwarg else
+          self.CALL_FUNCTION
+        )(
+            len(args) + 256 * len(kwargs) + preloaded,
+           -len(args) -   2 * len(kwargs) - preloaded - len(vararg + varkwarg)
+        )
+
+    for opname in dis.opmap:
+
+        locals()[opname] = lambda self, argument=None, stackdelta=None, name=opname: \
+          self.appendcode(name, argument, stackdelta)
 
 # _ :: dict StructMixIn ((Code, *StructMixIn) -> ())
 #
@@ -240,8 +320,8 @@ class Code:
 # `scanvars(a)`, `scanvars(b)`, `scanvars(c)`, and `scanvars(d)`, while the
 # default behavior would be to do `scanvars(a = b)` and `scanvars(c = d)`.
 #
-INFIX_LEFT  = defaultdict(lambda: Code.infixbindl)
-INFIX_RIGHT = defaultdict(lambda: Code.infixbindr)
-PREFIX      = defaultdict(lambda: Code.nativecall)
+INFIX_LEFT  = collections.defaultdict(lambda: Code.infixbindl)
+INFIX_RIGHT = collections.defaultdict(lambda: Code.infixbindr)
+PREFIX      = collections.defaultdict(lambda: Code.nativecall)
 
 PREFIX[''] = Code.call
