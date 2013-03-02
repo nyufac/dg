@@ -1,4 +1,3 @@
-import io
 import dis
 import types
 import collections
@@ -95,31 +94,6 @@ def joinvarsX(*add, skip_first=False):
     return lambda code, cell: (joinvars1 if skip_first else joinvars)(add + list(code), cell)
 
 ### VARIABLE SCANNER--
-
-
-# compile :: (Either StructMixIn TextIOBase str, Code, Maybe str) -> Code
-#
-# Compile a parse tree into a mutable code object.
-#
-def compile(code, target, name='<unknown>'):
-
-    if isinstance(code, parse.tree.StructMixIn):
-
-        target.push(code)
-        target.RETURN_VALUE()
-        return target
-
-    elif isinstance(code, io.TextIOBase):
-
-        return compile(parse.fd(code, name), target, name)
-
-    elif isinstance(code, str):
-
-        return compile(parse.it(code, name), target, name)
-
-    else:
-
-        raise TypeError('not compilable: {!r}'.format(code))
 
 
 # data Code = Code (str, int, int, int, set Link, set Link, set Link, set Link)
