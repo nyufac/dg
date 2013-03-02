@@ -10,7 +10,7 @@ from .. import parse
 #
 def ast(code, name='<module>'):
 
-    target = core.Code('<unknown>', 0, 0, core.Code.NOFREE, *core.scanvars(code, set()))
+    target = core.Code('<unknown>', 0, 0, core.Code.NOFREE, *core.scanvars(code, set(), nolocals=True))
     target.push(code)
     target.RETURN_VALUE()
     return target.immutable

@@ -21,7 +21,7 @@ __all__ = ['INFIX_LEFT', 'INFIX_RIGHT', 'PREFIX', 'scanvars', 'compile', 'Code']
 #   3. cell variables
 #   4. free variables
 #
-def scanvars(code, cell, rightbind=False):
+def scanvars(code, cell, nolocals, rightbind=False):
 
     if isinstance(code, parse.tree.Link):
 
@@ -40,7 +40,8 @@ def scanvars(code, cell, rightbind=False):
         g =  INFIX_RIGHT[f] if f.infix and not f.closed and rightbind \
         else INFIX_LEFT[f]  if f.infix and not f.closed and len(args) == 1 \
         else PREFIX[f] if isinstance(f, parse.tree.Link) else Code.nativecall
-        return getattr(g, 'scanvars', joinvars)(code, cell)
+
+        return getattr(g, 'scanvars', joinvars)(code, cell, nolocals)
 
     raise TypeError('not an AST output structure: {!r}'.format(code))
 
@@ -49,7 +50,7 @@ def scanvars(code, cell, rightbind=False):
 #
 # Like `scanvars`, but for multiple items in the same expression.
 #
-def joinvars(code, cell):
+def joinvars(code, cell, nolocals):
 
     globals = set()
     locals  = set()
@@ -58,7 +59,7 @@ def joinvars(code, cell):
 
     for item in code:
 
-        a, b, c, d = scanvars(item, cell)
+        a, b, c, d = scanvars(item, cell, nolocals)
         globals |= a
         globals -= b | c | d
         locals  |= b
@@ -78,9 +79,9 @@ def joinvars(code, cell):
 #     (PREFIX !! '+') = bind binary_op 'BINARY_ADD' 'INPLACE_ADD'
 #     (PREFIX !! '+').scanvars = compile.joinvars1
 #
-def joinvars1(code, cell):
+def joinvars1(code, cell, nolocals):
 
-    return joinvars(code[1:], cell)
+    return joinvars(code[1:], cell, nolocals)
 
 
 # joinvarsX :: (*StructMixIn, Maybe bool) -> typeof joinvars
@@ -88,10 +89,10 @@ def joinvars1(code, cell):
 # A wrapper for `joinvars` and `joinvars1` that adds a few more items.
 # Useful when a compile-time function uses variables.
 #
-def joinvarsX(*add, skip_first=False):
+def joinvarsX(*add, f=joinvars):
 
     add = list(add)
-    return lambda code, cell: (joinvars1 if skip_first else joinvars)(add + list(code), cell)
+    return lambda code, cell, nolocals: f(add + list(code), cell, nolocals)
 
 ### VARIABLE SCANNER--
 
@@ -373,7 +374,8 @@ class Code:
           else INFIX_LEFT[f](self, f, *args)  if f.infix and not f.closed and len(args) == 1 \
           else PREFIX[f](self, f, *args) if isinstance(f, parse.tree.Link) else self.nativecall(f, *args)
 
-    call.scanvars = lambda code, cell: scanvars(parse.tree.Expression(code[1:]), cell, rightbind=True)
+    # NOTE this is NOT the same as `joinvars1` because of `rightbind`.
+    call.scanvars = lambda code, cell, nolocals: scanvars(parse.tree.Expression(code[1:]), cell, nolocals, rightbind=True)
 
     # infixbindl :: (StructMixIn, StructMixIn) -> ()
     #
