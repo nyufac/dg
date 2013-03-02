@@ -257,6 +257,23 @@ class Code:
         self.depthmax = max(self.depth, self.depthmax)
         self.bytecode.append((dis.opmap[name], argument))
 
+    # bakedopcode :: (int, int) -> iter bytes
+    #
+    # Compile a single instruction.
+    #
+    def bakedopcode(self, code, arg):
+
+        if code >= dis.HAVE_ARGUMENT and arg > 0xFFFF:
+
+            yield from self.bakedopcode(dis.opmap['EXTENDED_ARG'], arg // 0xFFFF)
+
+        yield code
+
+        if code >= dis.HAVE_ARGUMENT:
+
+            yield arg %  256
+            yield arg // 256
+
     @property
     # bakedcode :: iter bytes
     #
@@ -266,12 +283,7 @@ class Code:
 
         for code, arg in self.bytecode:
 
-            yield code
-
-            if code >= dis.HAVE_ARGUMENT:
-
-                yield arg %  256
-                yield arg // 256
+            yield from self.bakedopcode(code, arg)
 
     @property
     # immutable :: code
