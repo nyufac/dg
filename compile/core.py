@@ -293,6 +293,21 @@ class Code:
         self.depthmax = max(self.depth, self.depthmax)
         self.bytecode.append((dis.opmap[name], argument))
 
+    for opname in dis.opmap:
+
+        locals()[opname] = lambda self, argument=None, stackdelta=None, name=opname: \
+          self.appendcode(name, argument, stackdelta)
+
+    # appendname :: str -> int
+    #
+    # Add something to the `names` map.
+    #
+    def appendname(self, name):
+
+        assert isinstance(name, parse.tree.Link), 'not a valid name'
+        v = self.names[name] = self.names.get(name, len(self.names))
+        return v
+
     # bakedopcode :: (int, int) -> iter bytes
     #
     # Compile a single instruction.
@@ -455,10 +470,38 @@ class Code:
            -len(args) -   2 * len(kwargs) - preloaded - len(vararg + varkwarg)
         )
 
-    for opname in dis.opmap:
+    ### ESSENTIAL BUILT-INS
+    #
+    # type Builtin = (StructMixIn, StructMixIn+) -> ()
+    #
 
-        locals()[opname] = lambda self, argument=None, stackdelta=None, name=opname: \
-          self.appendcode(name, argument, stackdelta)
+    # chain :: Builtin
+    #
+    # Push & pop each expression, except for the last one.
+    #
+    def chain(self, _, *args):
+
+        for not_last, expr in enumerate(args, 1 - len(args)):
+
+            self.push(expr)
+            self.POP_TOP() if not_last else None
+
+    chain.scanvars = joinvars1
+
+    # getattr :: Builtin
+    #
+    # Retrieve an attribute of some object.
+    #
+    def getattr(self, f, obj, *args):
+
+        len(args) > 0 or parse.syntax.error('which attribute?', obj)
+        len(args) < 2 or parse.syntax.error('one at a time',    args[1])
+        isinstance(args[0], parse.tree.Link) or parse.syntax.error('not an attribute', args[0])
+
+        self.push(obj)
+        self.LOAD_ATTR(self.appendname(args[0]))
+
+    getattr.scanvars = joinvars1
 
 # _ :: dict StructMixIn ((Code, *StructMixIn) -> ())
 #
@@ -481,4 +524,6 @@ INFIX_LEFT  = collections.defaultdict(lambda: Code.infixbindl)
 INFIX_RIGHT = collections.defaultdict(lambda: Code.infixbindr)
 PREFIX      = collections.defaultdict(lambda: Code.nativecall)
 
-PREFIX[''] = Code.call
+PREFIX['']   = Code.call
+PREFIX['\n'] = Code.chain
+PREFIX['.']  = Code.getattr
