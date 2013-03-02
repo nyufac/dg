@@ -105,6 +105,103 @@ class Code:
     GENERATOR = 32
     NOFREE    = 64
 
+    OPCODE_STACK_DELTA = {
+     'NOP':          0,
+     'EXTENDED_ARG': 0,
+
+     'POP_TOP':    -1,
+     'ROT_TWO':     0,
+     'ROT_THREE':   0,
+     'DUP_TOP':     1,
+     'DUP_TOP_TWO': 2,
+
+     'BINARY_ADD':           -1,
+     'BINARY_AND':           -1,
+     'BINARY_FLOOR_DIVIDE':  -1,
+     'BINARY_LSHIFT':        -1,
+     'BINARY_MODULO':        -1,
+     'BINARY_MULTIPLY':      -1,
+     'BINARY_OR':            -1,
+     'BINARY_POWER':         -1,
+     'BINARY_RSHIFT':        -1,
+     'BINARY_SUBSCR':        -1,
+     'BINARY_SUBTRACT':      -1,
+     'BINARY_TRUE_DIVIDE':   -1,
+     'BINARY_XOR':           -1,
+     'COMPARE_OP':           -1,
+     'INPLACE_ADD':          -1,
+     'INPLACE_AND':          -1,
+     'INPLACE_FLOOR_DIVIDE': -1,
+     'INPLACE_LSHIFT':       -1,
+     'INPLACE_MODULO':       -1,
+     'INPLACE_MULTIPLY':     -1,
+     'INPLACE_OR':           -1,
+     'INPLACE_POWER':        -1,
+     'INPLACE_RSHIFT':       -1,
+     'INPLACE_SUBTRACT':     -1,
+     'INPLACE_TRUE_DIVIDE':  -1,
+     'INPLACE_XOR':          -1,
+
+     'UNARY_INVERT':   0,
+     'UNARY_NEGATIVE': 0,
+     'UNARY_NOT':      0,
+     'UNARY_POSITIVE': 0,
+
+     'LOAD_ATTR':        0,
+     'LOAD_BUILD_CLASS': 1,
+     'LOAD_CLOSURE':     1,
+     'LOAD_CONST':       1,
+     'LOAD_DEREF':       1,
+     'LOAD_FAST':        1,
+     'LOAD_GLOBAL':      1,
+     'LOAD_NAME':        1,
+
+     'STORE_ATTR':   -2,
+     'STORE_DEREF':  -1,
+     'STORE_FAST':   -1,
+     'STORE_GLOBAL': -1,
+     'STORE_LOCALS': -1,
+     'STORE_NAME':   -1,
+     'STORE_SUBSCR': -1,
+
+     'DELETE_ATTR':   -1,
+     'DELETE_DEREF':   0,
+     'DELETE_FAST':    0,
+     'DELETE_GLOBAL':  0,
+     'DELETE_NAME':    0,
+     'DELETE_SUBSCR': -2,
+
+     'FOR_ITER': 1,
+     'GET_ITER': 0,
+
+     'IMPORT_FROM':  1,
+     'IMPORT_NAME': -1,
+     'IMPORT_STAR': -1,
+
+     'JUMP_ABSOLUTE':         0,
+     'JUMP_FORWARD':          0,
+     'JUMP_IF_FALSE_OR_POP': -1,
+     'JUMP_IF_TRUE_OR_POP':  -1,
+     'POP_JUMP_IF_FALSE':    -1,
+     'POP_JUMP_IF_TRUE':     -1,
+
+     'BUILD_MAP':    1,
+     'LIST_APPEND': -1,
+     'MAP_ADD':     -2,
+     'SET_ADD':     -1,
+     'STORE_MAP':   -2,
+
+     'PRINT_EXPR':   -1,
+     'RETURN_VALUE': -1,
+     'YIELD_FROM':   -1,
+     'YIELD_VALUE':  -1,
+
+     'SETUP_EXCEPT':  0,
+     'SETUP_FINALLY': 0,
+     'SETUP_LOOP':    0,
+     'SETUP_WITH':    2,
+    }
+
     def __init__(self, name, argc, kwargc, flags, globals, locals, cell, free):
 
         super().__init__()
@@ -116,7 +213,7 @@ class Code:
 
         self.filename = '<generated>'
         self.lineno   = 0
-        self.depth    = 10
+        self.depth    = 0
         self.depthmax = 0
         self.bytecode = []
         self.lnomap   = {}
@@ -154,9 +251,10 @@ class Code:
     #
     def appendcode(self, name, argument=None, stackdelta=None):
 
-        #raise NotImplementedError
-
-        #stackdelta = self.OPCODE_STACK_DELTA[name] if stackdelta is None else stackdelta
+        self.depth += stackdelta if stackdelta is not None \
+                 else self.OPCODE_STACK_DELTA[name] if name in self.OPCODE_STACK_DELTA \
+                 else self.error(AssertionError, '{!r} requires manual delta calculation'.format(name))
+        self.depthmax = max(self.depth, self.depthmax)
         self.bytecode.append((dis.opmap[name], argument))
 
     @property
@@ -225,7 +323,7 @@ class Code:
 
             self.call(*item)
 
-        #assert oldstacksize + 1 == self.depth, 'stack depth calculation error'
+        assert oldstacksize + 1 == self.depth, 'stack depth calculation error'
 
     # call :: *StructMixIn -> ()
     #
