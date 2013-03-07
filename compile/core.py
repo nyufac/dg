@@ -173,7 +173,7 @@ class Code:
      'STORE_GLOBAL': -1,
      'STORE_LOCALS': -1,
      'STORE_NAME':   -1,
-     'STORE_SUBSCR': -1,
+     'STORE_SUBSCR': -3,
 
      'DELETE_ATTR':   -1,
      'DELETE_DEREF':   0,
@@ -345,17 +345,17 @@ class Code:
 
         if isinstance(item, parse.tree.Link):
 
-            self.appendcode('LOAD_FAST',  self.varnames[item]) if item in self.varnames else \
-            self.appendcode('LOAD_DEREF', self.freevars[item]) if item in self.freevars else \
-            self.appendcode('LOAD_DEREF', self.freevars[item]) if item in self.cellvars else \
-            self.appendcode('LOAD_NAME',  self.names[item])    if item in self.names    else \
+            self.LOAD_FAST (self.varnames[item]) if item in self.varnames else \
+            self.LOAD_DEREF(self.freevars[item]) if item in self.freevars else \
+            self.LOAD_DEREF(self.freevars[item]) if item in self.cellvars else \
+            self.LOAD_NAME (self.names[item])    if item in self.names    else \
             self.error(AssertionError, 'variable scanner error')
 
         elif isinstance(item, parse.tree.Constant):
 
             val = item.value
             self.consts[type(val), val] = a = self.consts.get((type(val), val), len(self.consts))
-            self.appendcode('LOAD_CONST', a)
+            self.LOAD_CONST(a)
 
         else:
 
@@ -446,6 +446,44 @@ class Code:
            -len(args) -   2 * len(kwargs) - preloaded - len(vararg + varkwarg)
         )
 
+    # store_top :: StructMixIn -> ()
+    #
+    # Append a sequence of opcodes that stores the top value in a variable.
+    #
+    def store_top(self, var):
+
+        type, var, args = var._store_top_scanner_cache
+
+        if type == const.AT.UNPACK:
+
+            ln, star = args
+            op  = 'UNPACK_SEQUENCE' if star < 0 else 'UNPACK_EX'
+            arg = ln                if star < 0 else star + 256 * (ln - star - 1)
+            self.appendcode(op, arg, ln - 1)
+
+            for item in var:
+
+                self.store_top(item)
+
+        elif type == const.AT.ATTR:
+
+            self.push(args)
+            self.STORE_ATTR(var)
+
+        elif type == const.AT.ITEM:
+
+            self.push(args)
+            self.push(var)
+            self.STORE_SUBSCR()
+
+        else:
+
+            self.STORE_FAST (self.varnames[item]) if item in self.varnames else \
+            self.STORE_DEREF(self.freevars[item]) if item in self.freevars else \
+            self.STORE_DEREF(self.freevars[item]) if item in self.cellvars else \
+            self.STORE_NAME (self.names[item])    if item in self.names    else \
+            self.error(AssertionError, 'variable scanner error')
+
     ### ESSENTIAL BUILT-INS
     #
     # type Builtin = (StructMixIn, StructMixIn+) -> ()
@@ -477,7 +515,7 @@ class Code:
         self.push(obj)
         self.LOAD_ATTR(self.appendname(args[0]))
 
-    getattr.scanvars = joinvars1
+    getattr.scanvars = lambda code, cell, nolocals: scanvars(code[1], cell, nolocals)
 
 # _ :: dict StructMixIn ((Code, *StructMixIn) -> ())
 #
