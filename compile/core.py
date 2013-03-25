@@ -571,7 +571,7 @@ class Code:
         self.push(parse.tree.Constant('<FIXME:qualname>'))
         (self.MAKE_CLOSURE if target.freevars else self.MAKE_FUNCTION)(
                 len(defs) + 256 * len(kwdefs),
-            1 - len(defs) -   2 * len(kwdefs) - bool(target.freevars)
+            1 - len(defs) -   2 * len(kwdefs) - bool(target.freevars) - 2
         )
 
     ### ESSENTIAL BUILT-INS
