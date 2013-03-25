@@ -376,7 +376,7 @@ class Code:
 
             self.LOAD_FAST (self.varnames[item]) if item in self.varnames else \
             self.LOAD_DEREF(self.freevars[item]) if item in self.freevars else \
-            self.LOAD_DEREF(self.freevars[item]) if item in self.cellvars else \
+            self.LOAD_DEREF(self.cellvars[item]) if item in self.cellvars else \
             self.LOAD_NAME (self.names[item])    if item in self.names    else \
             self.error(AssertionError, 'variable scanner error')
 
