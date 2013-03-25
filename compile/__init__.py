@@ -10,7 +10,14 @@ from .. import parse
 #
 def ast(code, name='<module>'):
 
-    target = core.Code(name, 0, 0, 0, *core.scanvars(code, set(), nolocals=True))
+    queue = []
+    a, b, c, d = core.scanvars(code, set(), nolocals=True, queue=queue)
+
+    for f in queue:
+
+        f(a, b, c, d)
+
+    target = core.Code(name, 0, 0, 0, a, b, c, d)
     target.push(code)
     target.RETURN_VALUE()
     return target.immutable

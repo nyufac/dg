@@ -23,7 +23,7 @@ __all__ = ['INFIX_LEFT', 'INFIX_RIGHT', 'PREFIX', 'scanvars', 'compile', 'Code']
 #   3. cell variables
 #   4. free variables
 #
-def scanvars(code, cell, nolocals, rightbind=False):
+def scanvars(code, cell, nolocals, rightbind=False, queue=None):
 
     if isinstance(code, parse.tree.Link):
 
@@ -43,7 +43,7 @@ def scanvars(code, cell, nolocals, rightbind=False):
         else INFIX_LEFT[f]  if f.infix and not f.closed and len(args) == 1 \
         else PREFIX[f] if isinstance(f, parse.tree.Link) else Code.nativecall
 
-        return getattr(g, 'scanvars', joinvars)(code, cell, nolocals)
+        return getattr(g, 'scanvars', joinvars)(code, cell, nolocals, queue=queue)
 
     raise TypeError('not an AST output structure: {!r}'.format(code))
 
@@ -52,7 +52,7 @@ def scanvars(code, cell, nolocals, rightbind=False):
 #
 # Like `scanvars`, but for multiple items in the same expression.
 #
-def joinvars(code, cell, nolocals, scanf=scanvars):
+def joinvars(code, cell, nolocals, scanf=scanvars, queue=None):
 
     globals = set()
     locals  = set()
@@ -61,7 +61,7 @@ def joinvars(code, cell, nolocals, scanf=scanvars):
 
     for item in code:
 
-        a, b, c, d = scanf(item, cell, nolocals)
+        a, b, c, d = scanf(item, cell, nolocals, queue=queue)
         globals |= a
         globals -= b | c | d
         locals  |= b
@@ -81,9 +81,9 @@ def joinvars(code, cell, nolocals, scanf=scanvars):
 #     (PREFIX !! '+') = bind binary_op 'BINARY_ADD' 'INPLACE_ADD'
 #     (PREFIX !! '+').scanvars = compile.joinvars1
 #
-def joinvars1(code, cell, nolocals):
+def joinvars1(code, cell, nolocals, queue=None):
 
-    return joinvars(code[1:], cell, nolocals)
+    return joinvars(code[1:], cell, nolocals, queue=queue)
 
 
 # joinvarsX :: (*StructMixIn, Maybe bool) -> typeof joinvars
@@ -94,7 +94,7 @@ def joinvars1(code, cell, nolocals):
 def joinvarsX(*add, f=joinvars):
 
     add = list(add)
-    return lambda code, cell, nolocals: f(add + list(code), cell, nolocals)
+    return lambda code, cell, nolocals, queue=None: f(add + list(code), cell, nolocals, queue=queue)
 
 
 # binary_scanner :: (str, str) -> typeof scanvars -> typeof scanvars
@@ -105,12 +105,12 @@ def binary_scanner(one='this needs 2 arguments', three='too many arguments for {
 
     def wrapper(method):
 
-        def wrapped(code, cell, nolocals):
+        def wrapped(code, cell, nolocals, queue=None):
 
             f, lhs, *rhs = code
             len(rhs) > 0 or parse.syntax.error(one  .format(f), f)
             len(rhs) < 2 or parse.syntax.error(three.format(f), rhs[1])
-            return method(code, cell, nolocals)
+            return method(code, cell, nolocals, queue=queue)
 
         return wrapped
 
@@ -360,6 +360,8 @@ class Code:
             tuple(              sorted(self.cellvars, key=self.cellvars.__getitem__)),
         )
 
+    ## HIGH-LEVEL OPCODE GENERATION
+
     # push :: StructMixIn -> ()
     #
     # Append a sequence of opcodes that pushes the result of an expression
@@ -367,6 +369,7 @@ class Code:
     #
     def push(self, item):
 
+        assert isinstance(item, parse.tree.StructMixIn)
         mdepth = self.depth
 
         if isinstance(item, parse.tree.Link):
@@ -401,7 +404,7 @@ class Code:
           else PREFIX[f](self, f, *args) if isinstance(f, parse.tree.Link) else self.nativecall(f, *args)
 
     # NOTE this is NOT the same as `joinvars1` because of `rightbind`.
-    call.scanvars = lambda code, cell, nolocals: scanvars(parse.tree.Expression(code[1:]), cell, nolocals, rightbind=True)
+    call.scanvars = lambda code, cell, nolocals, queue=None: scanvars(parse.tree.Expression(code[1:]), cell, nolocals, rightbind=True, queue=queue)
 
     # infixbindl :: (StructMixIn, StructMixIn) -> ()
     #
@@ -516,23 +519,23 @@ class Code:
     #
     #     Code.store_top.scanvars(varname, cell, nolocals)
     #
-    def _(code, cell, nolocals):
+    def _(code, cell, nolocals, queue=None):
 
         type, var, args = code._store_top_scanner_cache = parse.syntax.assignment_target(code)
 
         if type == const.AT.UNPACK:
 
-            return joinvars(var, cell, nolocals, scanf=Code._store_top_scanvars)
+            return joinvars(var, cell, nolocals, scanf=Code._store_top_scanvars, queue=queue)
 
         if type == const.AT.ATTR:
 
-            a, b, c, d = scanvars(args, cell, nolocals)
+            a, b, c, d = scanvars(args, cell, nolocals, queue=queue)
             a.add(var)
             return a, b, c, d
 
         if type == const.AT.ITEM:
 
-            return joinvars([args, var], cell, nolocals)
+            return joinvars([args, var], cell, nolocals, queue=queue)
 
         return (
             (set(), set(), set(), {var}) if var in cell else
@@ -545,11 +548,11 @@ class Code:
     #
     # Push a function object onto the stack.
     #
-    def make_function(target, defs, kwdefs):
+    def make_function(self, target, defs, kwdefs):
 
         for k, v in kwdefs.items():
 
-            self.push(str(k))
+            self.push(parse.tree.Constant(str(k)))
             self.push(v)
 
         for a in defs:
@@ -564,8 +567,8 @@ class Code:
 
             self.BUILD_TUPLE(len(target.freevars), 1 - len(target.freevars))
 
-        self.push(target.immutable)
-        self.push('<FIXME:qualname>')
+        self.push(parse.tree.Constant(target.immutable))
+        self.push(parse.tree.Constant('<FIXME:qualname>'))
         (self.MAKE_CLOSURE if target.freevars else self.MAKE_FUNCTION)(
                 len(defs) + 256 * len(kwdefs),
             1 - len(defs) -   2 * len(kwdefs) - bool(target.freevars)
@@ -600,12 +603,12 @@ class Code:
 
     @scanner_of(getattr)
     @binary_scanner('which attribute?', 'one at a time')
-    def _(code, cell, nolocals):
+    def _(code, cell, nolocals, queue=None):
 
         _, lhs, rhs = code
         isinstance(rhs, parse.tree.Link) or parse.syntax.error('not an attribute', rhs)
 
-        a, b, c, d = scanvars(lhs, cell, nolocals)
+        a, b, c, d = scanvars(lhs, cell, nolocals, queue=queue)
         a.add(rhs)
         return a, b, c, d
 
@@ -624,12 +627,12 @@ class Code:
 
     @scanner_of(store)
     @binary_scanner('store what?', 'one at a time')
-    def _(code, cell, nolocals):
+    def _(code, cell, nolocals, queue=None):
 
         _, var, expr = code
         # Same as `joinvars`, but more compact and with two different scanners.
-        a, b, c, d = scanvars(expr, cell, nolocals)
-        e, f, g, h = Code.store_top.scanvars(var, cell, nolocals)
+        a, b, c, d = scanvars(expr, cell, nolocals, queue=queue)
+        e, f, g, h = Code.store_top.scanvars(var, cell, nolocals, queue=queue)
         return (a | e) - (f | g | h), (b |  f) - (g | h), (c | g) - h, d | h
 
     # function :: Builtin
@@ -640,8 +643,8 @@ class Code:
 
         code = Code('<FIXME:name>', argspec._argc, argspec._kwargc, Code.OPTIMIZED | Code.NEWLOCALS, *body._vars)
         # Argument names should be in the correct order.
-        code.varnames = {k: i + len(argspec._targets) for k, i in enumerate(code.varnames.keys() - set(argspec._targets))}
-        code.varnames.update({k: i for i, k in enumerate(argspec._targets)})
+        code.varnames = {k: i + len(argspec._argnames) for i, k in enumerate(code.varnames.keys() - set(argspec._argnames))}
+        code.varnames.update({k: i for i, k in enumerate(argspec._argnames)})
 
         for name, pattern in argspec._targets.items():
 
@@ -651,11 +654,13 @@ class Code:
         code.push(body)
         code.RETURN_VALUE()
 
-        self.make_function(code, body, argspec._defs, argspec._kwdefs)
+        self.make_function(code, argspec._defs, argspec._kwdefs)
 
     @scanner_of(function)
     @binary_scanner('this function should do what?', 'one body per function')
-    def _(code, cell, nolocals):
+    def _(code, cell, nolocals, queue=None):
+
+        assert queue
 
         _, argspec, body = code
         argspec._argspec_cache = parse.syntax.argspec(argspec, definition=True)
@@ -678,10 +683,26 @@ class Code:
 
             argspec._argnames.append(arg)
 
-        # TODO add the function object to some sort of queue
-        #   so that it will be processed at the end of the code object
-        #   that is being compiled.
+        def scanbody(_, locals, cell, free):
 
+            new_queue = []
+
+            a = set(argspec._argnames)
+            b, c, d, e = scanvars(body, locals | free, False, queue=new_queue)
+
+            b -= a
+            c |= a
+
+            for f in new_queue:
+
+                f(b, c, d, e)
+
+            body._vars = b, c, d, e
+            locals -= e
+            cell |= e
+            cell -= free
+
+        queue.append(scanbody)
         return set(), set(), set(), set()
 
 
