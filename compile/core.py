@@ -660,7 +660,7 @@ class Code:
     @binary_scanner('this function should do what?', 'one body per function')
     def _(code, cell, nolocals, queue=None):
 
-        assert queue
+        assert queue is not None
 
         _, argspec, body = code
         argspec._argspec_cache = parse.syntax.argspec(argspec, definition=True)
