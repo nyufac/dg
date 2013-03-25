@@ -262,6 +262,7 @@ class Code:
         super().__init__()
         self.name  = name
         self.flags = flags | self.NOFREE * (not cell) | self.NESTED * bool(free)
+        self.noldname = flags & self.OPTIMIZED
 
         self.argc   = argc
         self.kwargc = kwargc
@@ -392,10 +393,11 @@ class Code:
 
         if isinstance(item, parse.tree.Link):
 
-            self.LOAD_FAST (self.varnames[item]) if item in self.varnames else \
-            self.LOAD_DEREF(self.freevars[item]) if item in self.freevars else \
-            self.LOAD_DEREF(self.cellvars[item]) if item in self.cellvars else \
-            self.LOAD_NAME (self.names[item])    if item in self.names    else \
+            self.LOAD_FAST  (self.varnames[item]) if item in self.varnames else \
+            self.LOAD_DEREF (self.freevars[item]) if item in self.freevars else \
+            self.LOAD_DEREF (self.cellvars[item]) if item in self.cellvars else \
+            self.LOAD_GLOBAL(self.names[item])    if self.noldname         else \
+            self.LOAD_NAME  (self.names[item])    if item in self.names    else \
             self.error(AssertionError, 'variable scanner error')
 
         elif isinstance(item, parse.tree.Constant):
@@ -528,7 +530,7 @@ class Code:
             self.STORE_FAST (self.varnames[var]) if var in self.varnames else \
             self.STORE_DEREF(self.freevars[var]) if var in self.freevars else \
             self.STORE_DEREF(self.cellvars[var]) if var in self.cellvars else \
-            self.STORE_NAME (self.names[var])    if var in self.names    else \
+            self.STORE_NAME (self.names[var])    if var in self.names and not self.noldname else \
             self.error(AssertionError, 'variable scanner error')
 
     @scanner_of(store_top)
