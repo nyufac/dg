@@ -48,29 +48,37 @@ def scanvars(code, cell, nolocals, rightbind=False, queue=None):
     raise TypeError('not an AST output structure: {!r}'.format(code))
 
 
+# joinsets :: [(set, set, set, set)] -> (set, set, set, set)
+#
+# Combine the results of scanning multiple expressions.
+#
+def joinsets(sets):
+
+    globals = set()
+    locals  = set()
+    cell    = set()
+    free    = set()
+
+    for a, b, c, d in sets:
+
+        free    |= d
+        cell    |= c
+        cell    -= free
+        locals  |= b
+        locals  -= free | cell
+        globals |= a
+        globals -= free | cell | locals
+
+    return globals, locals, cell, free
+
+
 # joinvars :: ([StructMixIn], set Link) -> (set Link, set Link, set Link, set Link)
 #
 # Like `scanvars`, but for multiple items in the same expression.
 #
 def joinvars(code, cell, nolocals, scanf=scanvars, queue=None):
 
-    globals = set()
-    locals  = set()
-    ncell   = set()
-    free    = set()
-
-    for item in code:
-
-        a, b, c, d = scanf(item, cell, nolocals, queue=queue)
-        globals |= a
-        globals -= b | c | d
-        locals  |= b
-        locals  -= c | d
-        ncell   |= c
-        ncell   -= d
-        free    |= d
-
-    return globals, locals, ncell, free
+    return joinsets(scanf(item, cell, nolocals, queue=queue) for item in code)
 
 
 # joinvars1 :: ([StructMixIn], set Link) -> (set Link, set Link, set Link, set Link)
@@ -309,6 +317,16 @@ class Code:
         locals()[opname] = lambda self, argument=None, stackdelta=None, name=opname: \
           self.appendcode(name, argument, stackdelta)
 
+    # appendname :: str -> int
+    #
+    # Add something to the `names` map.
+    #
+    def appendname(self, name):
+
+        assert isinstance(name, parse.tree.Link), 'not a valid name'
+        v = self.names[name] = self.names.get(name, len(self.names))
+        return v
+
     # bakedopcode :: (int, int) -> iter bytes
     #
     # Compile a single instruction.
@@ -497,7 +515,7 @@ class Code:
         elif type == const.AT.ATTR:
 
             self.push(args)
-            self.STORE_ATTR(var)
+            self.STORE_ATTR(self.appendname(var))
 
         elif type == const.AT.ITEM:
 
@@ -529,9 +547,7 @@ class Code:
 
         if type == const.AT.ATTR:
 
-            a, b, c, d = scanvars(args, cell, nolocals, queue=queue)
-            a.add(var)
-            return a, b, c, d
+            return scanvars(args, cell, nolocals, queue=queue)
 
         if type == const.AT.ITEM:
 
@@ -599,7 +615,7 @@ class Code:
     def getattr(self, _, obj, attr):
 
         self.push(obj)
-        self.LOAD_ATTR(self.names[attr])
+        self.LOAD_ATTR(self.appendname(attr))
 
     @scanner_of(getattr)
     @binary_scanner('which attribute?', 'one at a time')
@@ -607,10 +623,7 @@ class Code:
 
         _, lhs, rhs = code
         isinstance(rhs, parse.tree.Link) or parse.syntax.error('not an attribute', rhs)
-
-        a, b, c, d = scanvars(lhs, cell, nolocals, queue=queue)
-        a.add(rhs)
-        return a, b, c, d
+        return scanvars(lhs, cell, nolocals, queue=queue)
 
     # store :: Builtin
     #
@@ -630,10 +643,10 @@ class Code:
     def _(code, cell, nolocals, queue=None):
 
         _, var, expr = code
-        # Same as `joinvars`, but more compact and with two different scanners.
-        a, b, c, d = scanvars(expr, cell, nolocals, queue=queue)
-        e, f, g, h = Code.store_top.scanvars(var, cell, nolocals, queue=queue)
-        return (a | e) - (f | g | h), (b |  f) - (g | h), (c | g) - h, d | h
+        return joinsets([
+            scanvars(expr, cell, nolocals, queue=queue),
+            Code.store_top.scanvars(var, cell, nolocals, queue=queue)
+        ])
 
     # function :: Builtin
     #
@@ -687,20 +700,19 @@ class Code:
 
             new_queue = []
 
-            a = set(argspec._argnames)
-            b, c, d, e = scanvars(body, locals | free, False, queue=new_queue)
-
-            b -= a
-            c |= a
+            a, b, c, d = joinsets([
+                (set(), set(argspec._argnames), set(), set()),
+                scanvars(body, locals | free, False, queue=new_queue)
+            ])
 
             for f in new_queue:
 
-                f(b, c, d, e)
+                f(a, b, c, d)
 
-            body._vars = b, c, d, e
-            locals -= e
-            cell |= e
-            cell -= free
+            body._vars = a, b, c, d
+
+            locals -= d
+            cell   |= d - free
 
         queue.append(scanbody)
         return set(), set(), set(), set()
