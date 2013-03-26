@@ -1,5 +1,6 @@
 import dis
 import types
+import posixpath
 import itertools
 import collections
 
@@ -719,6 +720,57 @@ class Code:
         queue.append(scanbody)
         return set(), set(), set(), set()
 
+    # import_ :: Builtin
+    #
+    # Import a module given a POSIX-style path.
+    # Normally, this function works as `from ... import ...` in Python;
+    # however, supplying "qualified" keyword after a module name makes it
+    # work like a simple `import`. (This only affects paths with multiple slashes.)
+    #
+    def import_(self, _, name, *qualified):
+
+        path, parent = name._data
+        self.push(parse.tree.Constant(parent))
+
+        if qualified or len(path) == 1:
+
+            self.push(parse.tree.Constant(None))
+            self.IMPORT_NAME(self.appendname(parse.tree.Link('.'.join(path))))
+
+        else:
+
+            *mod, var = path
+            self.push(parse.tree.Constant((str(var),)))
+            self.IMPORT_NAME(self.appendname(parse.tree.Link('.'.join(mod))))
+            self.IMPORT_FROM(self.appendname(var))
+            self.ROT_TWO()
+            self.POP_TOP()
+
+        self.DUP_TOP()
+        self.store_top(path[0 - len(qualified)])
+
+
+    @scanner_of(import_)
+    def _(code, cell, nolocals, queue=None):
+
+        _, name, *qualified = code
+        if not isinstance(name, parse.tree.Constant): parse.syntax.error('not a module name', name)
+        if not isinstance(name.value, str):           parse.syntax.error('not a module name', name)
+        if len(qualified) >  1:                                 parse.syntax.error('excess arguments', qualified[1])
+        if len(qualified) == 1 and qualified[0] != 'qualified': parse.syntax.error('only `qualified` is allowed here', qualified[0])
+
+        path   = [parse.tree.Link(x) for x in posixpath.normpath(name.value).split(posixpath.sep)]
+        parent = 1
+
+        while path and path[0] == '':               parent = path.pop(0) or 0
+        while path and path[0] == posixpath.curdir:          path.pop(0)
+        while path and path[0] == posixpath.pardir: parent = path.pop(0) and parent + 1
+        if not path: parse.syntax.error('invalid module name', name)
+        if qualified and parent: parse.syntax.error('cannot perform qualified relative imports', qualified[0])
+
+        name._data = path, parent
+        return Code.store_top.scanvars(path[0 - len(qualified)], cell, nolocals, queue=queue)
+
 
 # _ :: dict StructMixIn ((Code, *StructMixIn) -> ())
 #
@@ -746,3 +798,4 @@ PREFIX['\n'] = Code.chain
 PREFIX['.']  = Code.getattr
 PREFIX['=']  = Code.store
 PREFIX['->'] = Code.function
+PREFIX['import'] = Code.import_
