@@ -11,7 +11,7 @@ from .. import parse
 def ast(code, name='<module>'):
 
     queue = []
-    a, b, c, d = core.scanvars(code, set(), nolocals=True, queue=queue)
+    a, b, c, d = core.scanvars(code, set(), True, queue)
 
     for f in queue:
 

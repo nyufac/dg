@@ -29,14 +29,14 @@ def throw(e): raise e
 #   3. cell variables
 #   4. free variables
 #
-def scanvars(code, cell, nolocals, queue=None):
+def scanvars(code, cell, nolocals, queue):
 
     assert isinstance(code, parse.tree.StructMixIn)
     return (
         (set(),  set(), set(), {code}) if isinstance(code, parse.tree.Link) and code in cell else
         ({code}, set(), set(), set())  if isinstance(code, parse.tree.Link)                  else
         (set(),  set(), set(), set())  if isinstance(code, parse.tree.Constant)              else
-        Code.call.scanvars(code, cell, nolocals, queue=queue, rightbind=False)
+        Code.call.scanvars(code, cell, nolocals, queue, rightbind=False)
     )
 
 
@@ -57,18 +57,18 @@ def joinsets(sets):
 #
 # Like `scanvars`, but for multiple items in the same expression.
 #
-def joinvars(code, cell, nolocals, scanf=scanvars, queue=None):
+def joinvars(code, cell, nolocals, queue, scanf=scanvars):
 
-    return joinsets(scanf(item, cell, nolocals, queue=queue) for item in code)
+    return joinsets(scanf(item, cell, nolocals, queue) for item in code)
 
 
 # joinvars1 :: ([StructMixIn], set Link) -> (set Link, set Link, set Link, set Link)
 #
 # Like `joinvars`, but ignores the first item, which is generally the function name.
 #
-def joinvars1(code, cell, nolocals, queue=None):
+def joinvars1(code, cell, nolocals, queue):
 
-    return joinvars(code[1:], cell, nolocals, queue=queue)
+    return joinvars(code[1:], cell, nolocals, queue)
 
 
 # joinvarsX :: (*StructMixIn, Maybe bool) -> typeof joinvars
@@ -79,7 +79,7 @@ def joinvars1(code, cell, nolocals, queue=None):
 def joinvarsX(*add, f=joinvars):
 
     add = list(add)
-    return lambda code, cell, nolocals, queue=None: f(add + list(code), cell, nolocals, queue=queue)
+    return lambda code, cell, nolocals, queue: f(add + list(code), cell, nolocals, queue)
 
 
 # binary_scanner :: (str, str) -> typeof scanvars -> typeof scanvars
@@ -90,12 +90,12 @@ def binary_scanner(one='this needs 2 arguments', three='too many arguments for {
 
     def wrapper(method):
 
-        def wrapped(code, cell, nolocals, queue=None):
+        def wrapped(code, cell, nolocals, queue):
 
             f, lhs, *rhs = code
             len(rhs) > 0 or parse.syntax.error(one  .format(f), f)
             len(rhs) < 2 or parse.syntax.error(three.format(f), rhs[1])
-            return method(code, cell, nolocals, queue=queue)
+            return method(code, cell, nolocals, queue)
 
         return wrapped
 
@@ -388,7 +388,7 @@ class Code:
         return self.call(*args, rightbind=True) if f.infix and f == '' else f._f(self, f, *args)
 
     @scanner_of(call)
-    def _(code, cell, nolocals, queue=None, rightbind=True):
+    def _(code, cell, nolocals, queue, rightbind=True):
 
         f, *args = code
         f._f = INFIX_RIGHT.get(f, Code.infixbindr) if f.infix and not f.closed and rightbind \
@@ -396,7 +396,7 @@ class Code:
           else PREFIX.get(f, Code.nativecall) if isinstance(f, parse.tree.Link) else Code.nativecall
 
         code = args if f.infix and f == '' else code
-        return getattr(f._f, 'scanvars', joinvars)(code, cell, nolocals, queue=queue)
+        return getattr(f._f, 'scanvars', joinvars)(code, cell, nolocals, queue)
 
     # infixbindl :: (StructMixIn, StructMixIn) -> ()
     #
@@ -511,14 +511,14 @@ class Code:
     #
     #     Code.store_top.scanvars(varname, cell, nolocals)
     #
-    def _(code, cell, nolocals, queue=None):
+    def _(code, cell, nolocals, queue):
 
         type, var, args = code._store_top_scanner_cache = parse.syntax.assignment_target(code)
 
         return (
-            joinvars([args, var], cell, nolocals, queue=queue)                         if type == const.AT.ITEM   else
-            joinvars(var,  cell, nolocals, queue=queue, scanf=Code.store_top.scanvars) if type == const.AT.UNPACK else
-            scanvars(args, cell, nolocals, queue=queue)                                if type == const.AT.ATTR   else
+            joinvars([args, var], cell, nolocals, queue)                         if type == const.AT.ITEM   else
+            joinvars(var,  cell, nolocals, queue, scanf=Code.store_top.scanvars) if type == const.AT.UNPACK else
+            scanvars(args, cell, nolocals, queue)                                if type == const.AT.ATTR   else
             (set(), set(), set(), {var}) if var in cell else
             ({var}, set(), set(), set()) if nolocals else
             (set(), {var}, set(), set())
@@ -584,11 +584,11 @@ class Code:
 
     @scanner_of(getattr)
     @binary_scanner('which attribute?', 'one at a time')
-    def _(code, cell, nolocals, queue=None):
+    def _(code, cell, nolocals, queue):
 
         _, lhs, rhs = code
         isinstance(rhs, parse.tree.Link) or parse.syntax.error('not an attribute', rhs)
-        return scanvars(lhs, cell, nolocals, queue=queue)
+        return scanvars(lhs, cell, nolocals, queue)
 
     # store :: Builtin
     #
@@ -605,12 +605,12 @@ class Code:
 
     @scanner_of(store)
     @binary_scanner('store what?', 'one at a time')
-    def _(code, cell, nolocals, queue=None):
+    def _(code, cell, nolocals, queue):
 
         _, var, expr = code
         return joinsets([
-            scanvars(expr, cell, nolocals, queue=queue),
-            Code.store_top.scanvars(var, cell, nolocals, queue=queue)
+            scanvars(expr, cell, nolocals, queue),
+            Code.store_top.scanvars(var, cell, nolocals, queue)
         ])
 
     # function :: Builtin
@@ -636,9 +636,7 @@ class Code:
 
     @scanner_of(function)
     @binary_scanner('this function should do what?', 'one body per function')
-    def _(code, cell, nolocals, queue=None):
-
-        assert queue is not None
+    def _(code, cell, nolocals, queue):
 
         _, argspec, body = code
         argspec._argspec_cache = parse.syntax.argspec(argspec, definition=True)
@@ -666,7 +664,7 @@ class Code:
             new_queue = []
             body._vars = joinsets([
                 (set(), set(argspec._argnames), set(), set()),
-                scanvars(body, locals | free, False, queue=new_queue)
+                scanvars(body, locals | free, False, new_queue)
             ])
 
             for f in new_queue:
@@ -710,7 +708,7 @@ class Code:
 
 
     @scanner_of(import_)
-    def _(code, cell, nolocals, queue=None):
+    def _(code, cell, nolocals, queue):
 
         _, name, *qualified = code
         if not isinstance(name, parse.tree.Constant): parse.syntax.error('not a module name', name)
@@ -728,7 +726,7 @@ class Code:
         if qualified and parent: parse.syntax.error('cannot perform qualified relative imports', qualified[0])
 
         name._data = path, parent
-        return Code.store_top.scanvars(path[0 - len(qualified)], cell, nolocals, queue=queue)
+        return Code.store_top.scanvars(path[0 - len(qualified)], cell, nolocals, queue)
 
 
 # _ :: dict StructMixIn ((Code, *StructMixIn) -> ())
