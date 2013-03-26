@@ -2,13 +2,18 @@ import dis
 import types
 import posixpath
 import itertools
-import collections
 
 from .. import parse
 from .. import const
 
 __all__ = ['INFIX_LEFT', 'INFIX_RIGHT', 'PREFIX', 'scanvars', 'compile', 'Code']
 
+
+# throw :: BaseException -> _|_
+#
+# An expression equivalent to `raise`.
+#
+def throw(e): raise e
 
 ### VARIABLE SCANNER
 #
@@ -26,22 +31,13 @@ __all__ = ['INFIX_LEFT', 'INFIX_RIGHT', 'PREFIX', 'scanvars', 'compile', 'Code']
 #
 def scanvars(code, cell, nolocals, queue=None):
 
-    if isinstance(code, parse.tree.Link):
-
-        return (
-          (set(), set(), set(), {code}) if code in cell else
-          ({code}, set(), set(), set())
-        )
-
-    if isinstance(code, parse.tree.Constant):
-
-        return set(), set(), set(), set()
-
-    if isinstance(code, parse.tree.Expression):
-
-        return Code.call.scanvars(code, cell, nolocals, queue=queue, rightbind=False)
-
-    raise TypeError('not an AST output structure: {!r}'.format(code))
+    assert isinstance(code, parse.tree.StructMixIn)
+    return (
+        (set(),  set(), set(), {code}) if isinstance(code, parse.tree.Link) and code in cell else
+        ({code}, set(), set(), set())  if isinstance(code, parse.tree.Link)                  else
+        (set(),  set(), set(), set())  if isinstance(code, parse.tree.Constant)              else
+        Code.call.scanvars(code, cell, nolocals, queue=queue, rightbind=False)
+    )
 
 
 # joinsets :: [(set, set, set, set)] -> (set, set, set, set)
@@ -50,21 +46,10 @@ def scanvars(code, cell, nolocals, queue=None):
 #
 def joinsets(sets):
 
-    globals = set()
-    locals  = set()
-    cell    = set()
-    free    = set()
-
-    for a, b, c, d in sets:
-
-        free    |= d
-        cell    |= c
-        cell    -= free
-        locals  |= b
-        locals  -= free | cell
-        globals |= a
-        globals -= free | cell | locals
-
+    globals, locals, cell, free = map(set.union, *sets)
+    cell    -= free
+    locals  -= free | cell
+    globals -= free | cell | locals
     return globals, locals, cell, free
 
 
@@ -80,10 +65,6 @@ def joinvars(code, cell, nolocals, scanf=scanvars, queue=None):
 # joinvars1 :: ([StructMixIn], set Link) -> (set Link, set Link, set Link, set Link)
 #
 # Like `joinvars`, but ignores the first item, which is generally the function name.
-# Useful for compile-time functions::
-#
-#     (PREFIX !! '+') = bind binary_op 'BINARY_ADD' 'INPLACE_ADD'
-#     (PREFIX !! '+').scanvars = compile.joinvars1
 #
 def joinvars1(code, cell, nolocals, queue=None):
 
@@ -103,7 +84,7 @@ def joinvarsX(*add, f=joinvars):
 
 # binary_scanner :: (str, str) -> typeof scanvars -> typeof scanvars
 #
-# Restrict a built-in function to two arguments.
+# Restrict a built-in function to two arguments by raising `SyntaxError`s.
 #
 def binary_scanner(one='this needs 2 arguments', three='too many arguments for {!r}'):
 
@@ -127,12 +108,7 @@ def binary_scanner(one='this needs 2 arguments', three='too many arguments for {
 #
 def scanner_of(f):
 
-    def wrapper(scanner):
-
-        f.scanvars = scanner
-        return None
-
-    return wrapper
+    return lambda x: setattr(f, 'scanvars', x)
 
 ### VARIABLE SCANNER--
 
@@ -148,6 +124,7 @@ def scanner_of(f):
 #
 class Code:
 
+    # `CodeType` flags. See CPython source code for information.
     OPTIMIZED = 1
     NEWLOCALS = 2
     VARARGS   = 4
@@ -156,6 +133,10 @@ class Code:
     GENERATOR = 32
     NOFREE    = 64
 
+    # How many items an opcode will push onto the stack.
+    # Note that some opcodes are missing from this list, as they change
+    # behavior depending on the argument (e.g. `END_FINALLY` may pop
+    # either one or three objects.)
     OPCODE_STACK_DELTA = {
      'NOP':          0,
      'EXTENDED_ARG': 0,
@@ -180,12 +161,12 @@ class Code:
      'BINARY_TRUE_DIVIDE':   -1,
      'BINARY_XOR':           -1,
      'COMPARE_OP':           -1,
-     'INPLACE_ADD':          -1,
-     'INPLACE_AND':          -1,
-     'INPLACE_FLOOR_DIVIDE': -1,
-     'INPLACE_LSHIFT':       -1,
-     'INPLACE_MODULO':       -1,
-     'INPLACE_MULTIPLY':     -1,
+     'INPLACE_ADD':          -1,  # NOTE these opcodes, despite having `INPLACE`
+     'INPLACE_AND':          -1,  #   in their names, still require `STORE_TOP`
+     'INPLACE_FLOOR_DIVIDE': -1,  #   to be added afterwards. The only
+     'INPLACE_LSHIFT':       -1,  #   difference from `BINARY` opcodes
+     'INPLACE_MODULO':       -1,  #   is the method used (e.g. `__iadd__`
+     'INPLACE_MULTIPLY':     -1,  #   instead of `__add__`.)
      'INPLACE_OR':           -1,
      'INPLACE_POWER':        -1,
      'INPLACE_RSHIFT':       -1,
@@ -270,8 +251,7 @@ class Code:
         self.bytecode = []
         self.lnomap   = {}
 
-        # Just in case.
-        # Run with `-O` (or was it `-OO`?) to ignore these checks.
+        # Run with `-O` to ignore these checks, though that's not recommended.
         assert len(locals) >= argc + kwargc + bool(flags & self.VARARGS) + bool(flags & self.VARKWARGS)
         assert bool(self.flags & self.NOFREE) == (not cell)
         assert bool(self.flags & self.NESTED) == bool(free)
@@ -289,23 +269,14 @@ class Code:
         self.cellvars = {k: i for i, k in enumerate(cell)}
         self.freevars = {k: i + len(cell) for i, k in enumerate(free)}
 
-    # error :: (type < Exception, *, **) -> _|_
-    #
-    # An expression equivalent to `raise`.
-    #
-    def error(self, T, *args, **kwargs):
-
-        raise T(*args, **kwargs)
-
     # appendcode :: (str, Maybe (Either int DelayedComputation), Maybe int) -> ()
     #
     # Append a single opcode given its name (sometimes with an argument.)
     #
     def appendcode(self, name, argument=None, stackdelta=None):
 
-        self.depth += stackdelta if stackdelta is not None \
-                 else self.OPCODE_STACK_DELTA[name] if name in self.OPCODE_STACK_DELTA \
-                 else self.error(AssertionError, '{!r} requires manual delta calculation'.format(name))
+        assert stackdelta is not None or name in self.OPCODE_STACK_DELTA
+        self.depth += stackdelta if stackdelta is not None else self.OPCODE_STACK_DELTA[name]
         self.depthmax = max(self.depth, self.depthmax)
         self.bytecode.append((dis.opmap[name], argument))
 
@@ -389,12 +360,12 @@ class Code:
 
         if isinstance(item, parse.tree.Link):
 
-            self.LOAD_FAST  (self.varnames[item]) if item in self.varnames else \
             self.LOAD_DEREF (self.freevars[item]) if item in self.freevars else \
             self.LOAD_DEREF (self.cellvars[item]) if item in self.cellvars else \
+            self.LOAD_FAST  (self.varnames[item]) if item in self.varnames else \
             self.LOAD_GLOBAL(self.names[item])    if self.noldname         else \
             self.LOAD_NAME  (self.names[item])    if item in self.names    else \
-            self.error(AssertionError, 'variable scanner error')
+            throw(AssertionError('variable scanner error'))
 
         elif isinstance(item, parse.tree.Constant):
 
@@ -420,9 +391,9 @@ class Code:
     def _(code, cell, nolocals, queue=None, rightbind=True):
 
         f, *args = code
-        f._f = INFIX_RIGHT[f] if f.infix and not f.closed and rightbind \
-          else INFIX_LEFT[f]  if f.infix and not f.closed and len(args) == 1 \
-          else PREFIX[f] if isinstance(f, parse.tree.Link) else Code.nativecall
+        f._f = INFIX_RIGHT.get(f, Code.infixbindr) if f.infix and not f.closed and rightbind \
+          else INFIX_LEFT.get(f, Code.infixbindl)  if f.infix and not f.closed and len(args) == 1 \
+          else PREFIX.get(f, Code.nativecall) if isinstance(f, parse.tree.Link) else Code.nativecall
 
         code = args if f.infix and f == '' else code
         return getattr(f._f, 'scanvars', joinvars)(code, cell, nolocals, queue=queue)
@@ -528,11 +499,11 @@ class Code:
 
         else:
 
-            self.STORE_FAST (self.varnames[var]) if var in self.varnames else \
             self.STORE_DEREF(self.freevars[var]) if var in self.freevars else \
             self.STORE_DEREF(self.cellvars[var]) if var in self.cellvars else \
+            self.STORE_FAST (self.varnames[var]) if var in self.varnames else \
             self.STORE_NAME (self.names[var])    if var in self.names and not self.noldname else \
-            self.error(AssertionError, 'variable scanner error')
+            throw(AssertionError('variable scanner error'))
 
     @scanner_of(store_top)
     # NOTE since `store_top` is not a real built-in, you
@@ -544,19 +515,10 @@ class Code:
 
         type, var, args = code._store_top_scanner_cache = parse.syntax.assignment_target(code)
 
-        if type == const.AT.UNPACK:
-
-            return joinvars(var, cell, nolocals, scanf=Code.store_top.scanvars, queue=queue)
-
-        if type == const.AT.ATTR:
-
-            return scanvars(args, cell, nolocals, queue=queue)
-
-        if type == const.AT.ITEM:
-
-            return joinvars([args, var], cell, nolocals, queue=queue)
-
         return (
+            joinvars([args, var], cell, nolocals, queue=queue)                         if type == const.AT.ITEM   else
+            joinvars(var,  cell, nolocals, queue=queue, scanf=Code.store_top.scanvars) if type == const.AT.UNPACK else
+            scanvars(args, cell, nolocals, queue=queue)                                if type == const.AT.ATTR   else
             (set(), set(), set(), {var}) if var in cell else
             ({var}, set(), set(), set()) if nolocals else
             (set(), {var}, set(), set())
@@ -702,20 +664,17 @@ class Code:
         def scanbody(_, locals, cell, free):
 
             new_queue = []
-
-            a, b, c, d = joinsets([
+            body._vars = joinsets([
                 (set(), set(argspec._argnames), set(), set()),
                 scanvars(body, locals | free, False, queue=new_queue)
             ])
 
             for f in new_queue:
 
-                f(a, b, c, d)
+                f(*body._vars)
 
-            body._vars = a, b, c, d
-
-            locals -= d
-            cell   |= d - free
+            locals -= body._vars[-1]
+            cell   |= body._vars[-1] - free
 
         queue.append(scanbody)
         return set(), set(), set(), set()
@@ -789,13 +748,13 @@ class Code:
 # `scanvars(a)`, `scanvars(b)`, `scanvars(c)`, and `scanvars(d)`, while the
 # default behavior would be to do `scanvars(a = b)` and `scanvars(c = d)`.
 #
-INFIX_LEFT  = collections.defaultdict(lambda: Code.infixbindl)
-INFIX_RIGHT = collections.defaultdict(lambda: Code.infixbindr)
-PREFIX      = collections.defaultdict(lambda: Code.nativecall)
-
-PREFIX['']   = Code.call
-PREFIX['\n'] = Code.chain
-PREFIX['.']  = Code.getattr
-PREFIX['=']  = Code.store
-PREFIX['->'] = Code.function
-PREFIX['import'] = Code.import_
+INFIX_LEFT  = {}
+INFIX_RIGHT = {}
+PREFIX      = {
+    '':       Code.call
+  , '.':      Code.getattr
+  , '=':      Code.store
+  , '\n':     Code.chain
+  , '->':     Code.function
+  , 'import': Code.import_
+}
