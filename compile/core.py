@@ -24,7 +24,7 @@ __all__ = ['INFIX_LEFT', 'INFIX_RIGHT', 'PREFIX', 'scanvars', 'compile', 'Code']
 #   3. cell variables
 #   4. free variables
 #
-def scanvars(code, cell, nolocals, rightbind=False, queue=None):
+def scanvars(code, cell, nolocals, queue=None):
 
     if isinstance(code, parse.tree.Link):
 
@@ -39,12 +39,7 @@ def scanvars(code, cell, nolocals, rightbind=False, queue=None):
 
     if isinstance(code, parse.tree.Expression):
 
-        f, *args = code
-        g =  INFIX_RIGHT[f] if f.infix and not f.closed and rightbind \
-        else INFIX_LEFT[f]  if f.infix and not f.closed and len(args) == 1 \
-        else PREFIX[f] if isinstance(f, parse.tree.Link) else Code.nativecall
-
-        return getattr(g, 'scanvars', joinvars)(code, cell, nolocals, queue=queue)
+        return Code.call.scanvars(code, cell, nolocals, queue=queue, rightbind=False)
 
     raise TypeError('not an AST output structure: {!r}'.format(code))
 
@@ -419,13 +414,18 @@ class Code:
     #
     def call(self, f, *args, rightbind=False):
 
-        return self.call(*args, rightbind=True) if f.infix and f == '' \
-          else INFIX_RIGHT[f](self, f, *args) if f.infix and not f.closed and rightbind \
-          else INFIX_LEFT[f](self, f, *args)  if f.infix and not f.closed and len(args) == 1 \
-          else PREFIX[f](self, f, *args) if isinstance(f, parse.tree.Link) else self.nativecall(f, *args)
+        return self.call(*args, rightbind=True) if f.infix and f == '' else f._f(self, f, *args)
 
-    # NOTE this is NOT the same as `joinvars1` because of `rightbind`.
-    call.scanvars = lambda code, cell, nolocals, queue=None: scanvars(parse.tree.Expression(code[1:]), cell, nolocals, rightbind=True, queue=queue)
+    @scanner_of(call)
+    def _(code, cell, nolocals, queue=None, rightbind=True):
+
+        f, *args = code
+        f._f = INFIX_RIGHT[f] if f.infix and not f.closed and rightbind \
+          else INFIX_LEFT[f]  if f.infix and not f.closed and len(args) == 1 \
+          else PREFIX[f] if isinstance(f, parse.tree.Link) else Code.nativecall
+
+        code = args if f.infix and f == '' else code
+        return getattr(f._f, 'scanvars', joinvars)(code, cell, nolocals, queue=queue)
 
     # infixbindl :: (StructMixIn, StructMixIn) -> ()
     #
@@ -546,7 +546,7 @@ class Code:
 
         if type == const.AT.UNPACK:
 
-            return joinvars(var, cell, nolocals, scanf=Code._store_top_scanvars, queue=queue)
+            return joinvars(var, cell, nolocals, scanf=Code.store_top.scanvars, queue=queue)
 
         if type == const.AT.ATTR:
 
