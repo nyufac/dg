@@ -258,7 +258,7 @@ class Code:
 
         assert not (free & cell)
         assert not (free & locals)
-        assert not (cell & locals)
+        #assert not (cell & locals)
         assert not (free & globals)
         assert not (cell & globals)
         assert not (locals & globals)
@@ -619,7 +619,7 @@ class Code:
     #
     def function(self, f, argspec, body):
 
-        code = Code('<FIXME:name>', argspec._argc, argspec._kwargc, Code.OPTIMIZED | Code.NEWLOCALS, *body._vars)
+        code = Code('<FIXME:name>', argspec._argc, argspec._kwargc, argspec._flags | Code.OPTIMIZED | Code.NEWLOCALS, *body._vars)
         # Argument names should be in the correct order.
         code.varnames = {k: i + len(argspec._argnames) for i, k in enumerate(code.varnames.keys() - set(argspec._argnames))}
         code.varnames.update({k: i for i, k in enumerate(argspec._argnames)})
@@ -644,7 +644,7 @@ class Code:
 
         argspec._argc     = len(args)
         argspec._kwargc   = len(kwargs)
-        argspec._flags    = Code.VARARGS * len(varargs) | Code.VARKWARGS | len(varkwargs)
+        argspec._flags    = Code.VARARGS * len(varargs) | Code.VARKWARGS * len(varkwargs)
         argspec._defs     = defs
         argspec._kwdefs   = kwdefs
         argspec._argnames = []
@@ -664,13 +664,14 @@ class Code:
             new_queue = []
             body._vars = joinsets([
                 (set(), set(argspec._argnames), set(), set()),
-                scanvars(body, locals | free, False, new_queue)
+                scanvars(body, locals | cell | free, False, new_queue)
             ])
 
             for f in new_queue:
 
                 f(*body._vars)
 
+            body._vars[1].__ior__(set(argspec._argnames))
             locals -= body._vars[-1]
             cell   |= body._vars[-1] - free
 
@@ -704,7 +705,7 @@ class Code:
             self.POP_TOP()
 
         self.DUP_TOP()
-        self.store_top(path[0 - len(qualified)])
+        self.store_top(path[0 - (not qualified)])
 
 
     @scanner_of(import_)
@@ -726,7 +727,7 @@ class Code:
         if qualified and parent: parse.syntax.error('cannot perform qualified relative imports', qualified[0])
 
         name._data = path, parent
-        return Code.store_top.scanvars(path[0 - len(qualified)], cell, nolocals, queue)
+        return Code.store_top.scanvars(path[0 - (not qualified)], cell, nolocals, queue)
 
 
 # _ :: dict StructMixIn ((Code, *StructMixIn) -> ())
