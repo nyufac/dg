@@ -1,0 +1,50 @@
+import '/builtins'
+import '/operator'
+import '/functools'
+
+
+# Shorthand type constructors (e.g. `set' a b`  <=> `set (a, b)`.)
+# These allow to use line continuation neatly.
+builtins.set'   = (*: xs) -> set  xs
+builtins.list'  = (*: xs) -> list xs
+builtins.dict'  = (*: xs **: ys) -> dict xs **: ys
+
+builtins.bind   = functools.partial
+builtins.flip   = f -> (x y) -> f y x
+
+builtins.call = builtins.(!) = builtins.($) = (f *: xs) -> f *: xs
+builtins.(,)  = builtins.tuple' = (*: xs) -> xs
+
+builtins.(<)  = operator.lt
+builtins.(<=) = operator.le
+builtins.(==) = operator.eq
+builtins.(!=) = operator.ne
+builtins.(>)  = operator.gt
+builtins.(>=) = operator.ge
+builtins.(is) = operator.is_
+builtins.(in) = flip operator.contains
+
+builtins.not  = operator.not_
+builtins.(~)  = operator.invert
+builtins.(+)  = operator.add
+builtins.(-)  = operator.sub
+builtins.(*)  = operator.mul
+builtins.(**) = operator.pow
+builtins.(/)  = operator.truediv
+builtins.(//) = operator.floordiv
+builtins.(%)  = operator.mod
+builtins.(.)  = getattr
+builtins.(!!) = operator.getitem
+builtins.(&)  = operator.and_
+builtins.(^)  = operator.xor
+builtins.(|)  = operator.or_
+builtins.(<<) = operator.lshift
+builtins.(>>) = operator.rshift
+
+builtins.(.~)  = delattr
+builtins.(!!~) = operator.delitem
+
+# Not-actually-operators.
+builtins.(...)  = Ellipsis
+builtins.(..)   = range
+builtins.(::)   = (a *: xs) -> a `isinstance` xs
